@@ -233,7 +233,7 @@ const padTo50 = str => {
 
 		const eta = etaMs ? date.toString() : "unknown";
 
-		const line = chalk`{bold {gray ${(new Date).toString()}} Errors: {red ${numErrors}}\tUploaded: {green ${numUploaded}/${maxLines}}\tUploading: {cyan ${uploading}}\tWaiting: {yellow ${waiting}}\tDownloading: {green ${downloading}}\tLines read: {magenta ${linesRead}/${maxLines}}\tMost recent upload started: {blue ${padTo50(lastUploadStart)}}\tMost recent successful upload: {yellow ${padTo50(lastUploaded)}}\tETA: ${eta}}`;
+		const line = chalk`{bold {gray ${(new Date).toLocaleString()}} Errors: {red ${numErrors}}\tUploaded: {green ${numUploaded}/${maxLines} (${(numUploaded / maxLines * 100).toFixed(2)}%)}\tUploading: {cyan ${uploading}}\tDownloading: {green ${downloading}}\tWaiting: {yellow ${waiting}}\tLines read: {magenta ${linesRead}/${maxLines}}\tMost recent upload started: {blue ${padTo50(lastUploadStart)}}\tMost recent successful upload: {yellow ${padTo50(lastUploaded)}}\tETA: ${eta}}`;
 		console.error(line);
 	};
 
