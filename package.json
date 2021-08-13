@@ -9,7 +9,8 @@
     "chalk": "^2.4.2",
     "neo4j-driver": "^4.0.2",
     "node-fetch": "^2.6.0",
-    "rimraf": "^2.7.1"
+    "rimraf": "^2.7.1",
+    "safe-browse-url-lookup": "^0.1.0"
   },
   "devDependencies": {
     "eslint": "^5.16.0"

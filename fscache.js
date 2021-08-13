@@ -1,5 +1,6 @@
-const fetch = require("@zeit/fetch-retry")(require("node-fetch"));
-const fetchConfig = {headers: {"User-Agent": "npm2neo4j (+ @programmer5000 here. Sorry if this is doing too many requests. https://github.com/programmer5000-com/npm2neo4j)"}, retry: {retries: 5}};
+const fetch = /*require("@zeit/fetch-retry")*/(require("node-fetch"));
+const fetchConfig = {headers: {"User-Agent": "npm2neo4j (+ @programmer5000 https://github.com/programmer5000-com/npm2neo4j)"}};
+const {AbortController} = require("abort-controller");
 const path = require("path");
 const fs = require("fs");
 const util = require("util");
@@ -63,8 +64,26 @@ const getModule = async (moduleName) => {
 	let data = await readJSON(encodeURIComponent(moduleName));
 	if(!data){
 		hit = false;
-		data = await((await fetch("https://skimdb.npmjs.com/registry/" + encodeURIComponent(moduleName), fetchConfig)).json());
-		writeJSON(encodeURIComponent(moduleName), data);
+		const controller = new AbortController();
+		const timeout = setTimeout(
+			() => controller.abort(),
+			10000,
+		);
+
+		try {
+			const req = fetch("https://skimdb.npmjs.com/registry/" + encodeURIComponent(moduleName), Object.assign(fetchConfig, {signal: controller.signal}));
+			data = await (await req).json();
+			await writeJSON(encodeURIComponent(moduleName), data);
+		}catch(e){
+			if (e.name === "AbortError") {
+				console.error(`${moduleName} Request timed out!`);
+			}else{
+				throw e;
+			}
+		}finally{
+			clearTimeout(timeout);
+		}
+
 	}
 	return {data, cacheHit: hit};
 };

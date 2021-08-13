@@ -1,7 +1,7 @@
 process.on("warning", e => console.warn(e.stack));
 
 const fetch = require("@zeit/fetch-retry")(require("node-fetch"));
-const fetchConfig = {headers: {"User-Agent": "npm2neo4j (+ @programmer5000 here. Sorry if this is doing too many requests. https://github.com/programmer5000-com/npm2neo4j)"}, retry: {retries: 5}};
+const fetchConfig = {headers: {"User-Agent": "npm2neo4j (@programmer5000 https://github.com/programmer5000-com/npm2neo4j)"}, retry: {retries: 5}};
 const chalk = require("chalk");
 const fscache = require("./fscache");
 const neo4j = require("neo4j-driver");
@@ -34,16 +34,15 @@ const properties = [
 	"keywords",
 	"maintainers",
 	"readmeFilename",
-	[data => data.license || "none", "license"],
+	[data => data.license ? (data.license.length ? (data.license[0].type ? data.license[0].type : data.license[0]) : (data.license.type ? data.license.type : (data.license.license ? data.license.license : (typeof data.license === "string" ? data.license : JSON.stringify(data.license))))) : "none", "license"],
 	"name",
 	[data => (data.author && data.author.name) ? data.author : ((data.maintainers && data.maintainers.length) ? data.maintainers[0] : {name: -1, email: -1}), "author"],
 	[data => data.bugs && data.bugs.url, "bugs"],
-	[data => data.license && data.license.type, "license"],
 	[data => data.repository && data.repository.url, "repository"],
 	[data => data.repository && data.repository.type, "repositoryType"],
 	[data => data.users ? Object.keys(data.users) : [], "users"],
-	[data => fromStandardDate(new Date(data.time.modified)), "modifiedTime"],
-	[data => fromStandardDate(new Date(data.time.created)), "createdTime"]
+	[data => data.time && fromStandardDate(new Date(data.time.modified)) || new Date, "modifiedTime"],
+	[data => data.time && data.time.created && fromStandardDate(new Date(data.time.created)), "createdTime"]
 ];
 
 const padTo50 = str => {
@@ -57,10 +56,18 @@ const padTo50 = str => {
 	};
 
 	log("starting...");
+	const alreadyDownloadedModules = [];
+	const result = await session.run("MATCH(p:Package) RETURN p.name as name");
+	result.records.forEach(record => {
+		alreadyDownloadedModules.push(record.get("name"));
+	});
+	log(`Skipping ${alreadyDownloadedModules.length} already added packages`);
+
 	let lineBuffer = "";
-	const resp = await fetch("https://skimdb.npmjs.com/registry/_all_docs", fetchConfig);
-	log("fetched");
-	const stream = resp.body;
+	// const resp = await fetch("https://skimdb.npmjs.com/registry/_all_docs", fetchConfig);
+	// log("fetched");
+	// const stream = resp.body;
+	const stream = require("fs").createReadStream("all_docs");
 
 	let firstLine = false;
 	let linesRead = 0;
@@ -76,46 +83,56 @@ const padTo50 = str => {
 			line = line.slice(0, -1);
 			const module = JSON.parse(line);
 			const moduleName = module.key;
-			await downloadModule(moduleName);
+			if (alreadyDownloadedModules.includes(moduleName)) {
+				numUploaded++;
+			} else {
+				await downloadModule(moduleName);
+			}
 		}
 	};
 
 	const downloadModule = async function (moduleName){
 
 		packagesBuffer.push((async () => {
+			try {
+				downloading++;
+				lastUploadStart = moduleName;
+				const module = (await fscache.getModule(moduleName)).data;
+				if (!module) return;
 
-			downloading ++;
-			lastUploadStart = moduleName;
-			const module = (await fscache.getModule(moduleName)).data;
+				const obj = {};
 
-			const obj = {};
-
-			properties.forEach(property => {
-				try {
-					const key = typeof property === "string" ? property : (property[1] || property[0]);
-					const preValue = typeof property === "string" ? property : property[0];
-					const value = typeof preValue === "function" ? preValue(module) : module[preValue];
-					if (value) {
-						obj[key] = value;
+				properties.forEach(property => {
+					try {
+						const key = typeof property === "string" ? property : (property[1] || property[0]);
+						const preValue = typeof property === "string" ? property : property[0];
+						const value = typeof preValue === "function" ? preValue(module) : module[preValue];
+						if (value) {
+							obj[key] = value;
+						}
+					} catch (e) {
+						console.log(moduleName, property);
+						throw e;
 					}
-				}catch(e){
-					console.log(moduleName, property);
-					throw e;
-				}
-			});
+				});
 
-			const mostRecentVersion = module.versions[(module["dist-tags"] && module["dist-tags"].latest) || Object.keys(module.versions).slice(-1)[0]];
-			const dependencies = mostRecentVersion && mostRecentVersion.dependencies ? Object.entries(mostRecentVersion.dependencies) : [];
-			obj.mostRecentVersion = mostRecentVersion ? mostRecentVersion.version : "";
-			obj.dependencies = dependencies.map(([name, version]) => ({
-				name,
-				version
-			}));
+				const mostRecentVersion = module.versions[(module["dist-tags"] && module["dist-tags"].latest) || Object.keys(module.versions).slice(-1)[0]];
+				const dependencies = mostRecentVersion && mostRecentVersion.dependencies ? Object.entries(mostRecentVersion.dependencies) : [];
+				obj.mostRecentVersion = mostRecentVersion ? mostRecentVersion.version : "";
+				obj.dependencies = dependencies.map(([name, version]) => ({
+					name,
+					version
+				}));
 
-			downloading --;
-			waiting ++;
+				downloading--;
+				waiting++;
 
-			return obj;
+				return obj;
+			}catch(e){
+				numErrors ++;
+				console.error(chalk.bgRedBright("Package Error in package ") + moduleName);
+				console.log(e);
+			}
 		})());
 
 		const procEnd = () => {
@@ -128,8 +145,8 @@ const padTo50 = str => {
 		};
 
 		if(packagesBuffer.length >= bufferSize) {
-			const packages = await Promise.all(packagesBuffer);
-			waiting -= packagesBuffer.length;
+			const packages = (await Promise.all(packagesBuffer)).filter(Boolean);
+			waiting -= packages.length;
 			uploading += packagesBuffer.length;
 			const string = `
 		FOREACH (package IN $packages | 
@@ -178,7 +195,7 @@ const padTo50 = str => {
 				numUploaded += packagesBuffer.length;
 				procEnd();
 			} catch (e) {
-				console.log(packages, moduleName);
+				console.log("got error", e, packages, packages.map(package => package.name).join(","));
 				numErrors++;
 				console.error(chalk.bgRedBright("\n\n================ COULD NOT UPLOAD, FAILED WITH ERROR: ================\n"), e, chalk.bgRedBright("\nQUERY"), string, chalk.bgRedBright("\nMODULE"));
 				procEnd();
@@ -189,6 +206,7 @@ const padTo50 = str => {
 			procEnd();
 		}
 	};
+
 
 	let lock = false;
 
